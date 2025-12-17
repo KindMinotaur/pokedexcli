@@ -7,6 +7,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
+
+	"github.com/KindMinotaur/pokedexcli/internal/pokecache"
 )
 
 type cliCommand struct {
@@ -18,6 +21,7 @@ type cliCommand struct {
 type commandConfig struct {
 	nextURL     string
 	previousURL string
+	cache       *pokecache.Cache
 }
 
 type LocationAreaList struct {
@@ -59,7 +63,9 @@ func init() {
 
 func main() {
 	scanner := bufio.NewScanner(os.Stdin)
-	config := &commandConfig{}
+	config := &commandConfig{
+		cache: pokecache.NewCache(5 * time.Minute),
+	}
 
 	for {
 		fmt.Print("Pokedex > ")
@@ -101,13 +107,25 @@ func commandMap(config *commandConfig) error {
 	if config.nextURL != "" {
 		url = config.nextURL
 	}
-
+	if data, ok := config.cache.Get(url); ok {
+		var list LocationAreaList
+		if err := json.Unmarshal(data, &list); err != nil {
+			return err
+		}
+		config.nextURL = list.Next
+		config.previousURL = list.Previous
+		for _, result := range list.Results {
+			fmt.Println(result.Name)
+		}
+		return nil
+	}
+	// Proceed with API fetch if not cached
 	res, err := http.Get(url)
 	if err != nil {
 		return err
 	}
 	body, err := io.ReadAll(res.Body)
-	res.Body.Close()
+	defer res.Body.Close()
 	if res.StatusCode > 299 {
 		return fmt.Errorf("Response failed with status code: %d and body: %s", res.StatusCode, body)
 	}
@@ -128,15 +146,30 @@ func commandMap(config *commandConfig) error {
 		fmt.Println(result.Name)
 	}
 
+	// Optionally add to cache after fetching
+	config.cache.Add(url, body)
+
 	return nil
 }
 
 func commandMapb(config *commandConfig) error {
+	url := "https://pokeapi.co/api/v2/location-area/"
 	if config.previousURL == "" {
 		fmt.Println("you're on the first page")
 		return nil
 	}
-
+	if data, ok := config.cache.Get(url); ok {
+		var list LocationAreaList
+		if err := json.Unmarshal(data, &list); err != nil {
+			return err
+		}
+		config.nextURL = list.Next
+		config.previousURL = list.Previous
+		for _, result := range list.Results {
+			fmt.Println(result.Name)
+		}
+		return nil
+	}
 	res, err := http.Get(config.previousURL)
 	if err != nil {
 		return err
@@ -162,6 +195,8 @@ func commandMapb(config *commandConfig) error {
 	for _, result := range list.Results {
 		fmt.Println(result.Name)
 	}
+
+	config.cache.Add(url, body)
 
 	return nil
 }
