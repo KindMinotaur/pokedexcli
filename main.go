@@ -15,7 +15,7 @@ import (
 type cliCommand struct {
 	name        string
 	description string
-	callback    func(*commandConfig) error
+	callback    func(*commandConfig, []string) error
 }
 
 type commandConfig struct {
@@ -32,6 +32,59 @@ type LocationAreaList struct {
 		Name string `json:"name"`
 		URL  string `json:"url"`
 	} `json:"results"`
+}
+
+type LocationDetails struct {
+	ID                   int    `json:"id"`
+	Name                 string `json:"name"`
+	GameIndex            int    `json:"game_index"`
+	EncounterMethodRates []struct {
+		EncounterMethod struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"encounter_method"`
+		VersionDetails []struct {
+			Rate    int `json:"rate"`
+			Version struct {
+				Name string `json:"name"`
+				URL  string `json:"url"`
+			} `json:"version"`
+		} `json:"version_details"`
+	} `json:"encounter_method_rates"`
+	Location struct {
+		Name string `json:"name"`
+		URL  string `json:"url"`
+	} `json:"location"`
+	Names []struct {
+		Name     string `json:"name"`
+		Language struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"language"`
+	} `json:"names"`
+	PokemonEncounters []struct {
+		Pokemon struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"pokemon"`
+		VersionDetails []struct {
+			Version struct {
+				Name string `json:"name"`
+				URL  string `json:"url"`
+			} `json:"version"`
+			MaxChance        int `json:"max_chance"`
+			EncounterDetails []struct {
+				MinLevel        int   `json:"min_level"`
+				MaxLevel        int   `json:"max_level"`
+				ConditionValues []any `json:"condition_values"`
+				Chance          int   `json:"chance"`
+				Method          struct {
+					Name string `json:"name"`
+					URL  string `json:"url"`
+				} `json:"method"`
+			} `json:"encounter_details"`
+		} `json:"version_details"`
+	} `json:"pokemon_encounters"`
 }
 
 var commands map[string]cliCommand
@@ -58,6 +111,21 @@ func init() {
 			description: "Displays the previous 20 pages of the Pokedex map",
 			callback:    commandMapb,
 		},
+		"explore": {
+			name:        "explore",
+			description: "Explore a specific location area in the Pokedex map",
+			callback:    commandExplore,
+		},
+		"catch": {
+			name:        "catch",
+			description: "Catch a Pokemon by name",
+			callback:    commandCatch,
+		},
+		"inspect": {
+			name:        "inspect",
+			description: "Inspect a caught Pokemon by name",
+			callback:    commandInspect,
+		},
 	}
 }
 
@@ -80,20 +148,20 @@ func main() {
 		firstWord := cleanText[0]
 
 		if cmd, exists := commands[firstWord]; exists {
-			cmd.callback(config)
+			cmd.callback(config, cleanText[1:])
 		} else {
 			fmt.Println("Unknown command")
 		}
 	}
 }
 
-func commandExit(config *commandConfig) error {
+func commandExit(config *commandConfig, args []string) error {
 	fmt.Println("Closing the Pokedex... Goodbye!")
 	os.Exit(0)
 	return nil
 }
 
-func commandHelp(config *commandConfig) error {
+func commandHelp(config *commandConfig, args []string) error {
 	fmt.Println("Welcome to the Pokedex!")
 	fmt.Println("Usage:")
 	for name, cmd := range commands {
@@ -102,7 +170,7 @@ func commandHelp(config *commandConfig) error {
 	return nil
 }
 
-func commandMap(config *commandConfig) error {
+func commandMap(config *commandConfig, args []string) error {
 	url := "https://pokeapi.co/api/v2/location-area/"
 	if config.nextURL != "" {
 		url = config.nextURL
@@ -119,7 +187,7 @@ func commandMap(config *commandConfig) error {
 		}
 		return nil
 	}
-	// Proceed with API fetch if not cached
+
 	res, err := http.Get(url)
 	if err != nil {
 		return err
@@ -146,13 +214,12 @@ func commandMap(config *commandConfig) error {
 		fmt.Println(result.Name)
 	}
 
-	// Optionally add to cache after fetching
 	config.cache.Add(url, body)
 
 	return nil
 }
 
-func commandMapb(config *commandConfig) error {
+func commandMapb(config *commandConfig, args []string) error {
 	url := "https://pokeapi.co/api/v2/location-area/"
 	if config.previousURL == "" {
 		fmt.Println("you're on the first page")
@@ -198,5 +265,56 @@ func commandMapb(config *commandConfig) error {
 
 	config.cache.Add(url, body)
 
+	return nil
+}
+
+func commandExplore(config *commandConfig, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("explore command requires an area name")
+	}
+	areaName := args[0]
+	url := fmt.Sprintf("https://pokeapi.co/api/v2/location-area/%s", areaName)
+	if data, ok := config.cache.Get(url); ok {
+		var location LocationDetails
+		if err := json.Unmarshal(data, &location); err != nil {
+			return err
+		}
+		for _, result := range location.PokemonEncounters {
+			fmt.Println(result.Pokemon.Name)
+		}
+		return nil
+	}
+	res, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	body, err := io.ReadAll(res.Body)
+	defer res.Body.Close()
+	var location LocationDetails
+	err = json.Unmarshal(body, &location)
+	if err != nil {
+		return err
+	}
+	for _, result := range location.PokemonEncounters {
+		fmt.Println(result.Pokemon.Name)
+	}
+	return nil
+}
+
+func commandCatch(config *commandConfig, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("catch command requires a pokemon name")
+	}
+	pokemonName := args[0]
+	fmt.Printf("Throwing a Pokeball at %s...\n", pokemonName)
+	return nil
+}
+
+func commandInspect(config *commandConfig, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("inspect command requires a pokemon name")
+	}
+	pokemonName := args[0]
+	fmt.Printf("Inspecting %s...\n", pokemonName)
 	return nil
 }
