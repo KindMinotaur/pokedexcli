@@ -26,8 +26,8 @@ func NewCache(interval time.Duration) *Cache {
 }
 
 func (c *Cache) Add(key string, val []byte) {
-	defer c.mu.Unlock()
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.cacheEntries[key] = cacheEntry{
 		createdAt: time.Now(),
 		val:       val,
@@ -35,26 +35,26 @@ func (c *Cache) Add(key string, val []byte) {
 }
 
 func (c *Cache) Get(key string) ([]byte, bool) {
-	defer c.mu.Unlock()
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if entry, ok := c.cacheEntries[key]; ok {
 		return entry.val, true
-	}else {
+	} else {
 		return nil, false
 	}
 }
 
 func (c *Cache) reapLoop(interval time.Duration) {
-	defer c.mu.Unlock()
-	c.mu.Lock()
 	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for range ticker.C {
-		<-ticker.C
+		c.mu.Lock()
 		now := time.Now()
 		for key, entry := range c.cacheEntries {
 			if now.Sub(entry.createdAt) > interval {
 				delete(c.cacheEntries, key)
 			}
 		}
+		c.mu.Unlock()
 	}
 }
